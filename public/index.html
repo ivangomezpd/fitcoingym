@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Gimnasio Fitcoin</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            text-align: center;
+            background-color: #f4f4f9;
+            padding: 50px;
+        }
+
+        h1 {
+            color: #FF6600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        .card {
+            background: white;
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        button {
+            background-color: #FF6600;
+            color: white;
+            border: none;
+            padding: 15px 32px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+
+        button:hover {
+            background-color: #E65C00;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .token-balance {
+            font-size: 2em;
+            color: #FF6600;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1><img src="https://www.basic-fit.com/on/demandware.static/Sites-BF-Site/-/default/dw1d673644/images/logo.svg"
+                alt="Basic-Fit Logo" height="40"> Recompensas Fitcoin</h1>
+        <p>Conecta tu billetera para reclamar tus tokens por entrenar.</p>
+
+        <button id="connectBtn">🦊 Conectar MetaMask</button>
+
+        <div id="dashboard" style="display:none;">
+            <p>Billetera conectada:</p>
+            <small id="walletAddress" style="color: #666;"></small>
+
+            <hr>
+            <p>Tu Saldo:</p>
+            <div class="token-balance"><span id="balance">0</span> FTC</div>
+            <button id="addTokenBtn" style="background-color: #f6851b; margin-top: 10px; font-size: 14px;">🦊 Agregar
+                FTC a MetaMask</button>
+
+            <button id="trainBtn">💪 Simular Entrenamiento (+10 FTC)</button>
+            <p id="status"></p>
+        </div>
+    </div>
+
+    <!-- Importamos Ethers.js para el navegador -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <script>
+        const CONTRACT_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
+        // Solo necesitamos saber cómo leer el saldo para el frontend
+        const ABI = ["function balanceOf(address owner) view returns (uint256)"];
+
+        let provider, contract, userAddress, ethProvider;
+
+        async function connect() {
+            // Detectar MetaMask específicamente si hay múltiples billeteras (como Uniswap)
+            if (window.ethereum && window.ethereum.providers) {
+                ethProvider = window.ethereum.providers.find((p) => p.isMetaMask);
+            } else {
+                ethProvider = window.ethereum;
+            }
+
+            if (!ethProvider) return alert("¡Necesitas instalar MetaMask!");
+
+            try {
+                // 1. Solicitar acceso a las cuentas explícitamente
+                await ethProvider.request({ method: "eth_requestAccounts" });
+
+                // 2. Conectar con Ethers
+                provider = new ethers.BrowserProvider(ethProvider);
+                const signer = await provider.getSigner();
+                userAddress = await signer.getAddress();
+
+                // 3. Verificar red y cambiar si es necesario
+                const network = await provider.getNetwork();
+                if (network.chainId !== 31337n) {
+                    try {
+                        await ethProvider.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0x7a69' }], // 31337
+                        });
+                    } catch (switchError) {
+                        if (switchError.code === 4902) {
+                            await ethProvider.request({
+                                method: 'wallet_addEthereumChain',
+                                params: [{
+                                    chainId: '0x7a69',
+                                    chainName: 'Hardhat Localhost',
+                                    rpcUrls: ['http://127.0.0.1:8545'],
+                                    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }
+                                }],
+                            });
+                        } else {
+                            throw switchError;
+                        }
+                    }
+                }
+
+                // Mostramos el panel
+                document.getElementById("walletAddress").innerText = userAddress;
+                document.getElementById("connectBtn").style.display = "none";
+                document.getElementById("dashboard").style.display = "block";
+
+                // Preparamos el contrato para leer saldo
+                contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
+                updateBalance();
+            } catch (error) {
+                console.error(error);
+                alert("Error al conectar: " + error.message);
+            }
+        }
+
+        async function updateBalance() {
+            if (!contract) return;
+            const balance = await contract.balanceOf(userAddress);
+            // Convertimos de Wei (18 ceros) a número normal
+            document.getElementById("balance").innerText = ethers.formatUnits(balance, 18);
+        }
+
+        document.getElementById("connectBtn").onclick = connect;
+
+        document.getElementById("addTokenBtn").onclick = async () => {
+            if (!ethProvider) return alert("Primero conecta tu billetera");
+            try {
+                await ethProvider.request({
+                    method: 'wallet_watchAsset',
+                    params: {
+                        type: 'ERC20',
+                        options: {
+                            address: CONTRACT_ADDRESS,
+                            symbol: 'FTC',
+                            decimals: 18,
+                        },
+                    },
+                });
+            } catch (error) { console.error(error); }
+        };
+
+        document.getElementById("trainBtn").onclick = async () => {
+            const btn = document.getElementById("trainBtn");
+            const status = document.getElementById("status");
+
+            btn.disabled = true;
+            status.innerText = "⏳ Procesando entrenamiento...";
+            status.style.color = "blue";
+
+            try {
+                // Llamamos a NUESTRO backend, no a la blockchain directamente
+                const response = await fetch("http://localhost:3000/claim-reward", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userAddress: userAddress })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    status.innerText = "✅ ¡Recompensa recibida!";
+                    status.style.color = "green";
+                    updateBalance(); // Actualizar saldo visual
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (err) {
+                status.innerText = "❌ Error: " + err.message;
+                status.style.color = "red";
+            } finally {
+                btn.disabled = false;
+            }
+        };
+    </script>
+</body>
+
+</html>
